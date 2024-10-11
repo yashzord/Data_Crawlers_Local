@@ -1,16 +1,68 @@
+# 4chan api client that has minimal functionality to collect data
+
+import logging
 import requests
 
-class FourChanClient:
-    BASE_URL = "https://a.4cdn.org"
-    
-    def fetch_threads(self, board):
-        response = requests.get(f"{self.BASE_URL}/{board}/threads.json")
-        response.raise_for_status()
-        data = response.json()
-        return data
+# logger setup
+logger = logging.getLogger("4chan client")
+logger.propagate = False
+logger.setLevel(logging.INFO)
+sh = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+sh.setFormatter(formatter)
+logger.addHandler(sh)
 
-    def fetch_thread(self, board, thread_id):
-        response = requests.get(f"{self.BASE_URL}/{board}/thread/{thread_id}.json")
-        response.raise_for_status()
-        data = response.json()
-        return data
+# API_BASE = "http://a.4cdn.org"
+
+
+class ChanClient:
+    API_BASE = "http://a.4cdn.org"
+    # def __init__(self):
+
+    # need to be able to collect threads
+    """
+    Get json for a given thread
+    """
+
+    def get_thread(self, board, thread_number):
+        # sample api call: http://a.4cdn.org/pol/thread/124205675.json
+        # make an http request to the url
+        request_pieces = [board, "thread", f"{thread_number}.json"]
+
+        api_call = self.build_request(request_pieces)
+        return self.execute_request(api_call)
+
+    """
+    Get catalog json for a given board
+    """
+
+    def get_catalog(self, board):
+        request_pieces = [board, "catalog.json"]
+        api_call = self.build_request(request_pieces)
+
+        return self.execute_request(api_call)
+
+    """
+    Build a request from pieces
+    """
+
+    def build_request(self, request_pieces):
+        api_call = "/".join([self.API_BASE] + request_pieces)
+        return api_call
+
+    """
+    This executes an http request and returns json
+    """
+
+    def execute_request(self, api_call):
+        resp = requests.get(api_call)  # error handling neede
+        logger.info(resp.status_code)
+        json = resp.json()  # error handling neede
+        logger.info(f"json: {json}")
+        return json
+
+
+if __name__ == "__main__":
+    client = ChanClient()
+    json = client.get_thread("pol", 124205675)
+    print(json)
