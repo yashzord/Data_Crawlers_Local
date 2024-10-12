@@ -1,8 +1,10 @@
 import logging
-from pyfaktory import Client, Consumer, Job, Producer
-import time
-import random
-import sys
+from pyfaktory import Client, Producer, Job
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger("faktory test")
 logger.propagate = False
@@ -12,14 +14,22 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 sh.setFormatter(formatter)
 logger.addHandler(sh)
 
-
 if __name__ == "__main__":
-    board = sys.argv[1]
-    print(f"Cold starting catalog crawl for board {board}")
-    # Default url for a Faktory server running locally
-    faktory_server_url = "tcp://:password@localhost:7419"
+    # Get list of boards from environment variable (e.g., g for technology, tv for movies & tv)
+    boards = os.environ.get("BOARDS", "").split(",")
+    
+    if not boards:
+        print("No boards specified. Please check your environment configuration.")
+        exit(1)
+    
+    print(f"Cold starting catalog crawl for boards: {boards}")
+    faktory_server_url = os.environ.get("FAKTORY_SERVER_URL")
 
+    # Push jobs for each board
     with Client(faktory_url=faktory_server_url, role="producer") as client:
         producer = Producer(client=client)
-        job = Job(jobtype="crawl-catalog", args=(board,), queue="crawl-catalog")
-        producer.push(job)
+        
+        for board in boards:
+            job = Job(jobtype="crawl-catalog", args=(board,), queue="crawl-catalog")
+            producer.push(job)
+            print(f"Enqueued crawl job for board: {board}")

@@ -2,3 +2,4 @@ requests
 pymongo
 # faktory
 pyfaktory
+python-dotenv
