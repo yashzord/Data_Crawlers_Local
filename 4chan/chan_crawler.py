@@ -211,6 +211,10 @@ def crawl_thread(board, thread_number):
 
     logger.info(f"Thread: {board}/{thread_number}/:\n{thread_data}")
 
+    if thread_data is None:
+        logger.warning(f"Thread {thread_number} might be deleted or unavailable")
+        return
+
     # Iterate through the thread data and get all the post data
     for post in thread_data["posts"]:
         post_number = post["no"]

@@ -52,6 +52,7 @@ def crawl_video(channel_id, video_id):
     except Exception as e:
         logger.error(f"Error inserting video {video_id} into MongoDB: {e}")
 
+
 def crawl_channel(channel_id):
     youtube_client = YouTubeClient()
     channel_data = youtube_client.get_channel_details(channel_id)
