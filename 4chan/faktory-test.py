@@ -22,7 +22,7 @@ def adder(x, y):
 
 if __name__ == "__main__":
     # Default url for a Faktory server running locally
-    faktory_server_url = "tcp://:password@localhost:7419"
+    faktory_server_url = "tcp://:yash123@localhost:7419"
 
     with Client(faktory_url=faktory_server_url, role="producer") as client:
         producer = Producer(client=client)
