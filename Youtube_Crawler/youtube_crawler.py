@@ -27,6 +27,11 @@ logger.addHandler(sh)
 FAKTORY_SERVER_URL = os.getenv("FAKTORY_SERVER_URL")
 
 def crawl_video(channel_id, video_id):
+
+    if videos_collection.find_one({"video_id": video_id}):
+        logger.info(f"Video {video_id} already exists")
+        return
+        
     youtube_client = YouTubeClient()
     video_data = youtube_client.get_video_details(video_id)
 
