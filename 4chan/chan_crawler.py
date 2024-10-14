@@ -1,124 +1,112 @@
+from chan_client import ChanClient
 import logging
 import pymongo
+from dotenv import load_dotenv
 import os
 import time
-from dotenv import load_dotenv
-from faktory import Client, Worker
-from chan_client import ChanClient
-from datetime import datetime
+from pyfaktory import Client, Consumer, Job, Producer
 import multiprocessing
+import datetime
 
 # Load environment variables
 load_dotenv()
 
 # MongoDB connection setup
-MONGO_DB_URL = os.getenv("MONGO_DB_URL") or "mongodb://localhost:27017/"
-mongo_client = pymongo.MongoClient(MONGO_DB_URL)
-db = mongo_client['4chan_data']  # Database name
-threads_collection = db['threads']  # Collection for threads and their engagement data
+MONGO_DB_URL = os.getenv("MONGO_DB_URL")
+client = pymongo.MongoClient(MONGO_DB_URL)
+db = client['4chan_data']  # Database name
+threads_collection = db['threads']  # Collection name
 
 # Logger setup
-logger = logging.getLogger("4chan_crawler")
+logger = logging.getLogger("ChanCrawler")
 logger.setLevel(logging.INFO)
 sh = logging.StreamHandler()
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sh.setFormatter(formatter)
 logger.addHandler(sh)
 
-# Faktory server URL from .env
-FAKTORY_SERVER_URL = os.getenv("FAKTORY_SERVER_URL") or 'tcp://:your_password@localhost:7419'
+FAKTORY_SERVER_URL = os.getenv("FAKTORY_SERVER_URL")
+BOARDS = os.getenv("BOARDS").split(',')
+
+def thread_numbers_from_catalog(catalog):
+    """
+    Extract thread numbers from catalog JSON object.
+    """
+    thread_numbers = []
+    for page in catalog:
+        for thread in page["threads"]:
+            thread_numbers.append(thread["no"])
+    return thread_numbers
 
 def crawl_thread(board, thread_number):
     """
-    Crawl a given thread and insert posts and engagement data into MongoDB.
+    Crawl a thread and save its details into MongoDB.
     """
     chan_client = ChanClient()
     thread_data = chan_client.get_thread(board, thread_number)
+    if thread_data:
+        thread_info = {
+            "board": board,
+            "thread_number": thread_number,
+            "original_post": thread_data["posts"][0],  # Assuming the first post is the original
+            "replies": thread_data["posts"][1:],  # The rest are replies
+            "number_of_replies": len(thread_data["posts"]) - 1,
+            "crawled_at": datetime.datetime.now()
+        }
 
-    if not thread_data or "posts" not in thread_data:
-        logger.warning(f"Thread {thread_number} might be deleted or unavailable.")
-        return
-
-    original_post = thread_data["posts"][0]  # First post is the OP
-    replies = thread_data["posts"][1:]  # All subsequent posts are replies
-
-    # Gather engagement data
-    num_replies = len(replies)
-    thread_length = len(thread_data["posts"])
-
-    thread_info = {
-        "board": board,
-        "thread_number": thread_number,
-        "original_post": original_post,
-        "num_replies": num_replies,
-        "thread_length": thread_length,
-        "crawled_at": datetime.now()
-    }
-
-    try:
         result = threads_collection.insert_one(thread_info)
-        logger.info(f"Inserted thread {thread_number} into MongoDB with ID: {result.inserted_id}")
-    except pymongo.errors.DuplicateKeyError:
-        logger.info(f"Duplicate thread {thread_number} skipped.")
+        logger.info(f"Inserted thread {thread_number} from /{board}/ into MongoDB with ID: {result.inserted_id}")
+    else:
+        logger.error(f"Failed to fetch or process thread: {board}/{thread_number}")
 
-def crawl_catalog(board):
+def crawl_board(board):
     """
-    Crawl the catalog for a given board, enqueue jobs for each thread.
+    Crawl all threads in a board's catalog and queue each thread for crawling.
     """
     chan_client = ChanClient()
-    catalog_data = chan_client.get_catalog(board)
-
-    if not catalog_data:
-        logger.error(f"Failed to retrieve catalog for board {board}")
-        return
-
-    thread_numbers = []
-    for page in catalog_data:
-        for thread in page.get("threads", []):
-            thread_numbers.append(thread["no"])
-
-    with Client(faktory_url=FAKTORY_SERVER_URL) as client:
-        for thread_number in thread_numbers:
-            client.queue('crawl_thread', args=(board, thread_number), queue='crawl_thread')
-            logger.info(f"Queued job to crawl thread {thread_number} from board {board}")
-
-def start_worker():
-    """
-    Start the Faktory worker to consume jobs from Faktory queues.
-    """
-    os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
-    worker = Worker(queues=['crawl_catalog', 'crawl_thread'])
-    worker.register('crawl_catalog', crawl_catalog)
-    worker.register('crawl_thread', crawl_thread)
-    logger.info("Worker started. Listening for jobs...")
-    worker.run()
+    catalog = chan_client.get_catalog(board)
+    if catalog:
+        thread_numbers = thread_numbers_from_catalog(catalog)
+        with Client(faktory_url=FAKTORY_SERVER_URL, role="producer") as client:
+            producer = Producer(client=client)
+            for thread_number in thread_numbers:
+                job = Job(jobtype="crawl-thread", args=(board, thread_number), queue="crawl-thread")
+                producer.push(job)
+            logger.info(f"Queued crawl jobs for board: /{board}/")
+    else:
+        logger.error(f"Failed to retrieve catalog for board /{board}/")
 
 def schedule_crawl_jobs():
     """
-    Schedule jobs to crawl 4chan boards.
+    Schedule crawling jobs for all configured boards.
     """
-    os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
-    boards = ['g', 'tv']  # Add other boards as needed
-    with Client() as client:
-        for board in boards:
-            client.queue('crawl_catalog', args=(board,), queue='crawl_catalog')
-            logger.info(f"Queued job to crawl catalog for board: {board}")
+    with Client(faktory_url=FAKTORY_SERVER_URL, role="producer") as client:
+        producer = Producer(client=client)
+        for board in BOARDS:
+            job = Job(jobtype="crawl-board", args=(board,), queue="crawl-board")
+            producer.push(job)
+        logger.info("Scheduled initial crawl jobs for all boards.")
 
 def monitor_queue():
     """
-    Monitor the Faktory queue for job statuses.
+    Periodically log the status of the queue.
     """
-    os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
-    while True:
-        with Client() as client:
-            info = client.info()
-            total_enqueued = sum(q['size'] for q in info.get('queues', []))
-            total_in_progress = info.get('tasks', {}).get('active', 0)
-            logger.info(f"Jobs in queue: {total_enqueued}, Jobs in progress: {total_in_progress}")
-        time.sleep(30)
+    # This function needs a specific monitoring setup that pyfaktory might not support directly
+    logger.info("Monitor function needs specific implementation details based on the Faktory monitoring setup.")
+
+def start_worker():
+    """
+    Start the Faktory worker to process queued jobs.
+    """
+    with Client(faktory_url=FAKTORY_SERVER_URL, role="consumer") as client:
+        consumer = Consumer(client=client, queues=["crawl-board", "crawl-thread"], concurrency=5)
+        consumer.register("crawl-board", crawl_board)
+        consumer.register("crawl-thread", crawl_thread)
+        logger.info("Worker started. Listening for jobs...")
+        consumer.run()
 
 if __name__ == "__main__":
-    # Start worker and queue monitoring processes
+    # Starting all processes
     worker_process = multiprocessing.Process(target=start_worker)
     worker_process.start()
 
@@ -128,8 +116,8 @@ if __name__ == "__main__":
     schedule_crawl_jobs()
 
     try:
-        while True:
-            time.sleep(1)
+        worker_process.join()
+        monitor_process.join()
     except KeyboardInterrupt:
         logger.info("Stopping processes...")
         worker_process.terminate()
