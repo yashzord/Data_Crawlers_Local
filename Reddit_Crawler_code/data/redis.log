@@ -1,0 +1,2 @@
+11:C 11 Oct 2024 16:39:52.751 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+11:M 11 Oct 2024 16:39:52.853 # Failed opening Unix socket: bind: Not supported
