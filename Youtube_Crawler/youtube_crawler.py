@@ -37,12 +37,12 @@ def crawl_video(channel_id, video_id):
     video_info = {
         "channel_id": channel_id,
         "video_id": video_id,
-        "title": video_data['snippet']['title'],
+        "title": video_data['snippet'].get('title', '[Deleted Title]'),
         "description": video_data['snippet'].get('description', '[Deleted Description]'),
         "view_count": video_data['statistics'].get('viewCount', 0),
         "like_count": video_data['statistics'].get('likeCount', 0),
         "comment_count": video_data['statistics'].get('commentCount', 0),
-        "published_at": video_data['snippet']['publishedAt'],
+        "published_at": video_data['snippet'].get('publishedAt', '[Unknown Date]'),
         "crawled_at": datetime.now()
     }
 
@@ -63,7 +63,7 @@ def crawl_channel(channel_id):
 
     channel_info = {
         "channel_id": channel_id,
-        "channel_name": channel_data['snippet']['title'],
+        "channel_name": channel_data['snippet'].get('title', '[Deleted Channel]'),
         "subscriber_count": int(channel_data['statistics'].get('subscriberCount', 0)),
         "view_count": int(channel_data['statistics'].get('viewCount', 0)),
         "video_count": int(channel_data['statistics'].get('videoCount', 0)),
