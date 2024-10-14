@@ -28,6 +28,12 @@ One line command - docker run --rm -it -v ./data:/var/lib/faktory/db -e "FAKTORY
 
 9. Run the Cold Start Script
   - python cold_start_board.py
+  - 
 10. Run the Crawler
   - python chan_crawler.py
-11. Still Have to work on what to collect exactly and optimize the code, this is just a start. Have to work on reddit and youtube as well. Hvae to make sure we collect data in real time.
+
+11. python youtube_crawler.py
+
+12. python reddit_crawler.py
+
+13. Still Have to work on what to collect exactly and optimize the code, this is just a start. Have to work on reddit and youtube as well. Hvae to make sure we collect data in real-time.
