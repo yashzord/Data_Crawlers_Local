@@ -7,6 +7,8 @@ from faktory import Client, Worker
 from reddit_client import RedditClient
 from datetime import datetime
 import multiprocessing
+import requests
+from requests.exceptions import HTTPError
 
 # Load environment variables
 load_dotenv()
@@ -26,11 +28,89 @@ logger.addHandler(sh)
 
 FAKTORY_SERVER_URL = os.getenv("FAKTORY_SERVER_URL") or 'tcp://:raj123@localhost:7419'
 
+
+# Initial retry delay in seconds
+MAX_RETRIES = 5
+RETRY_DELAY = 5  
+
+
+
+
+###################################### This is the helper function  to handle all 4xxx and 5XX error ###################################
+
+def retry_on_network_and_http_errors(func, *args):
+    
+    retries = 0
+    delay = RETRY_DELAY
+    while retries < MAX_RETRIES:
+        try:
+            return func(*args)
+        except HTTPError as http_err:
+            status_code = http_err.response.status_code
+            if 400 <= status_code < 500:
+                
+                
+                ######################  all  Handle  4xx Client Errors  ##################################
+                
+                
+                if status_code == 404:
+                    logger.warning(f"Resource not found (404). Post {args[1]} might be deleted.")
+                else:
+                    logger.error(f"Client error (status {status_code}) occurred for post {args[1]}. No retry.")
+                break  
+            elif 500 <= status_code < 600:
+                
+                
+                
+               ######################  all  Handle  5xx Client Errors  ##################################
+                logger.error(f"Server error (status {status_code}) occurred. Retrying in {delay} seconds...")
+            else:
+                logger.error(f"Unexpected HTTP error: {http_err}")
+            time.sleep(delay)
+            
+            
+            retries += 1
+            delay *= 2  
+            
+            
+        except requests.exceptions.RequestException as req_err:
+           
+            logger.error(f"Network error: {req_err}. Retrying in {delay} seconds...")
+            time.sleep(delay)
+            retries += 1
+            delay *= 2  
+    logger.error(f"Max retries reached. Failed to execute {func.__name__} after {MAX_RETRIES} attempts.")
+    return None
+
+
 def crawl_post(subreddit, post_id):
     reddit_client = RedditClient()
-    post_data = reddit_client.get_comments(subreddit, post_id)
+    
+    
+    ## Try and catch method to handle  and crawl from where it left the data ####################################
+    try:
+        post_data = retry_on_network_and_http_errors(reddit_client.get_comments, subreddit, post_id)
+    except requests.exceptions.HTTPError as http_err:
+        status_code = http_err.response.status_code
+        if status_code == 404:
+            logger.warning(f"Post {post_id} not found (404 error). Marking as deleted.")
+            posts_collection.update_one(
+                {"post_id": post_id},
+                {"$set": {
+                    "post_title": "[Deleted Title]",
+                    "post_content": "[Deleted Content]",
+                    "is_deleted": True,
+                    "crawled_at": datetime.now()
+                }},
+                upsert=True
+            )
+        else:
+            logger.error(f"HTTP error occurred: {http_err}")
+        return
 
     ##### ---------------------- Code to handle if the data is deleted ----------------#####
+    
+    
     if post_data is None or len(post_data[0]['data']['children']) == 0:
         logger.warning(f"Post {post_id} might be deleted or unavailable.")
         # If the post was already added to the database, mark it as deleted
@@ -82,8 +162,9 @@ def crawl_post(subreddit, post_id):
                 changes.append(f"Title changed: {existing_post['post_title']} -> {post_info['post_title']}")
                 changes_detected = True
 
-            # Log any other fields you want to compare (e.g., content, downvotes)
+           
             if changes_detected:
+                
                 # Update the existing post if any changes were detected
                 posts_collection.update_one(
                     {"post_id": post_id},
@@ -91,19 +172,27 @@ def crawl_post(subreddit, post_id):
                 )
                 logger.info(f"Updated post {post_id} in MongoDB. Changes: " + ", ".join(changes))
             else:
-                # No changes were detected, no need to log anything
+               
                 logger.info(f"No changes detected for post {post_id}.")
         else:
-            # Insert new post if it does not exist
+            
+            
+            
+            # Insert new post 
             result = posts_collection.insert_one(post_info)
             logger.info(f"Inserted new post {post_id} into MongoDB with ID: {result.inserted_id}")
 
     except Exception as e:
         logger.error(f"Error inserting/updating post {post_id} into MongoDB: {e}")
 
+
+
+
+
+
 def crawl_subreddit(subreddit):
     reddit_client = RedditClient()
-    hot_posts = reddit_client.get_hot_posts(subreddit)
+    hot_posts = retry_on_network_and_http_errors(reddit_client.get_hot_posts, subreddit)
 
     if hot_posts is None:
         logger.error(f"Failed to retrieve hot posts from {subreddit}")
@@ -115,6 +204,11 @@ def crawl_subreddit(subreddit):
             client.queue('crawl_post', args=(subreddit, post_id), queue='crawl_post')
             logger.info(f"Queued job to crawl post {post_id} from {subreddit}")
 
+
+
+
+
+
 def start_worker():
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
     worker = Worker(queues=['crawl_subreddit', 'crawl_post'])
@@ -122,6 +216,10 @@ def start_worker():
     worker.register('crawl_post', crawl_post)
     logger.info("Worker started. Listening for jobs...")
     worker.run()
+
+
+
+
 
 def schedule_crawl_jobs():
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
@@ -141,12 +239,16 @@ def monitor_queue():
             logger.info(f"Jobs in queue: {total_enqueued}, Jobs in progress: {total_in_progress}")
         time.sleep(120)  # Check every 2 minutes
 
+
+
 if __name__ == "__main__":
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
 
+    # Start worker process 
     worker_process = multiprocessing.Process(target=start_worker)
     worker_process.start()
 
+    # Start the process for monitoring the Faktory queue
     monitor_process = multiprocessing.Process(target=monitor_queue)
     monitor_process.start()
 
@@ -154,7 +256,7 @@ if __name__ == "__main__":
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(1)  
     except KeyboardInterrupt:
         logger.info("Stopping processes...")
         worker_process.terminate()
