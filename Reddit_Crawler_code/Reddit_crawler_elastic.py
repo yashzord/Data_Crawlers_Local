@@ -9,6 +9,7 @@ from datetime import datetime
 import multiprocessing
 import requests
 from requests.exceptions import HTTPError
+from elasticsearch import Elasticsearch  # Elasticsearch client
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +18,11 @@ MONGO_DB_URL = os.getenv("MONGO_DB_URL") or "mongodb://localhost:27017/"
 mongo_client = pymongo.MongoClient(MONGO_DB_URL)
 db = mongo_client['reddit_data']
 posts_collection = db['posts']
+
+# Initialize Elasticsearch client
+
+es = Elasticsearch([{'host': 'localhost', 'port': 9200, 'scheme': 'http'}])
+
 
 # Setup logger
 logger = logging.getLogger("RedditCrawler")
@@ -59,6 +65,14 @@ def retry_on_network_and_http_errors(func, *args):
             delay *= 2
     logger.error(f"Max retries reached. Failed to execute {func.__name__} after {MAX_RETRIES} attempts.")
     return None
+
+def index_data_to_elasticsearch(post_info):
+    try:
+        # Index the post data to Elasticsearch
+        es.index(index='reddit_posts', id=post_info['post_id'], body=post_info)
+        logger.info(f"Indexed post {post_info['post_id']} to Elasticsearch.")
+    except Exception as e:
+        logger.error(f"Error indexing post {post_info['post_id']} to Elasticsearch: {e}")
 
 def crawl_post(subreddit, post_id):
     reddit_client = RedditClient()
@@ -138,6 +152,9 @@ def crawl_post(subreddit, post_id):
             logger.info(f"Inserted new post {post_id} into MongoDB with ID: {result.inserted_id}")
     except Exception as e:
         logger.error(f"Error inserting/updating post {post_id} into MongoDB: {e}")
+
+    # Index the post data to Elasticsearch
+    index_data_to_elasticsearch(post_info)
 
 def crawl_subreddit(subreddit):
     reddit_client = RedditClient()

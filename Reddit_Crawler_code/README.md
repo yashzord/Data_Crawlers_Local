@@ -32,3 +32,12 @@ echo "FAKTORY_SERVER_URL=tcp://:raj123@localhost:7419" >> .env
 echo "REDDIT_CLIENT_ID=<your_reddit_client_id>" >> .env
 echo "REDDIT_CLIENT_SECRET=<your_reddit_client_secret>" >> .env
 
+
+## Setting up the Elastic Search 
+
+sudo docker run -d --name elasticsearch -p 9200:9200 -e "discovery.type=single-node" docker.elastic.co/elasticsearch/elasticsearch:7.17.1
+pip install elasticsearch
+
+sudo docker run -d --name kibana --link elasticsearch:elasticsearch -p 5601:5601 docker.elastic.co/kibana/kibana:7.17.1
+curl -X GET "localhost:9200/reddit_posts/_search?pretty"
+http://localhost:5601
