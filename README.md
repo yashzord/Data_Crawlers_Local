@@ -22,6 +22,9 @@
     -p 127.0.0.1:7419:7419 \
     -p 127.0.0.1:7420:7420 \
     contribsys/faktory:latest
+
+One line -  docker run --rm -it -v ./data:/var/lib/faktory/db -e "FAKTORY_PASSWORD=yash123" -p 127.0.0.1:7419:7419 -p 127.0.0.1:7420:7420 contribsys/faktory:latest
+
 Special Note - http://localhost:7420/
 9. Run the Cold Start Script
   - python cold_start_board.py
