@@ -41,12 +41,13 @@ class ChanClient:
                 return response.json()
             except HTTPError as http_err:
                 status_code = response.status_code
-                if 400 <= status_code < 500:
-                    if status_code == 404:
-                        logger.warning(f"Resource not found (404): {api_call}")
-                    else:
-                        logger.error(f"Client error occurred: {status_code} on {api_call}. No retry.")
-                    break
+                if status_code == 404:
+                    logger.warning(f"Resource not found (404): {api_call}")
+                    # Return None to signify that the resource is not found or deleted.
+                    return None
+                elif 400 <= status_code < 500:
+                    logger.error(f"Client error occurred: {status_code} on {api_call}. Retrying in {backoff_factor} seconds...")
+                    time.sleep(backoff_factor)
                 elif 500 <= status_code < 600:
                     logger.error(f"Server error occurred: {status_code} on {api_call}. Retrying in {backoff_factor} seconds...")
                     time.sleep(backoff_factor)
@@ -72,7 +73,11 @@ class ChanClient:
 
     def get_thread(self, board, thread_number):
         api_call = f"{self.API_BASE}/{board}/thread/{thread_number}.json"
-        return self.execute_request(api_call)
+        headers = {}
+        if api_call in self.last_modified_times:
+            headers['If-Modified-Since'] = self.last_modified_times[api_call]
+
+        return self.execute_request(api_call, headers)
 
     def get_catalog(self, board):
         api_call = f"{self.API_BASE}/{board}/catalog.json"
