@@ -35,7 +35,7 @@ class YouTubeClient:
 
     def get_channel_videos(self, channel_id, max_results=50):
         logger.info(f"Fetching videos for channel ID: {channel_id}")
-        url = f"{self.base_url}/search?part=snippet&channelId={channel_id}&maxResults={max_results}&order=date&type=video&key={self.api_key}"
+        url = f"{self.base_url}/search?part=snippet&channelId={channel_id}&maxResults={max_results}&order=viewCount&type=video&key={self.api_key}"
         response = requests.get(url)
         
         if response.status_code != 200:
