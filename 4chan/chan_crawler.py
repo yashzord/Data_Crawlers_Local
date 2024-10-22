@@ -66,6 +66,68 @@ def thread_numbers_from_catalog(catalog):
             thread_numbers.append(thread["no"])
     return thread_numbers
 
+def get_existing_thread_ids_from_db(board):
+    """Fetches the thread numbers for a board from the MongoDB database."""
+    return [thread["thread_number"] for thread in threads_collection.find({"board": board})]
+
+def find_deleted_threads(previous_thread_numbers, current_thread_numbers):
+    """Find threads that existed before but are now missing (deleted)."""
+    return set(previous_thread_numbers) - set(current_thread_numbers)
+
+# def mark_thread_as_deleted(board, thread_number):
+#     """Marks a thread as deleted in the MongoDB database."""
+#     logger.info(f"Marking thread {thread_number} on /{board}/ as deleted.")
+#     threads_collection.update_one(
+#         {"board": board, "thread_number": thread_number},
+#         {
+#             "$set": {
+#                 "original_post.com": "[deleted]",
+#                 "replies": [{**reply, "com": "[deleted]"} for reply in threads_collection.find_one({"board": board, "thread_number": thread_number}).get("replies", [])],
+#                 "number_of_replies": 0,
+#                 "deleted_at": datetime.datetime.now(),
+#                 "is_deleted": True
+#             }
+#         }
+#     )
+#     logger.info(f"Thread {thread_number} on /{board}/ has been marked as deleted in MongoDB.")
+
+def mark_thread_as_deleted(board, thread_number):
+    """Marks a thread as deleted in the MongoDB database, while keeping a history of previous details."""
+    logger.info(f"Marking thread {thread_number} on /{board}/ as deleted.")
+
+    # Fetch the existing thread to record its current state before deletion
+    existing_thread = threads_collection.find_one({"board": board, "thread_number": thread_number})
+
+    if existing_thread:
+        # Prepare historical data to store the previous state of the thread
+        history_entry = {
+            "timestamp": datetime.datetime.now(),
+            "original_post": existing_thread.get("original_post", {}),
+            "replies": existing_thread.get("replies", []),
+            "number_of_replies": existing_thread.get("number_of_replies", 0)
+        }
+
+        # Update the thread to mark it as deleted, add the current state to the history
+        threads_collection.update_one(
+            {"board": board, "thread_number": thread_number},
+            {
+                "$set": {
+                    "original_post.com": "[deleted]",
+                    "replies": [{**reply, "com": "[deleted]"} for reply in existing_thread.get("replies", [])],
+                    "number_of_replies": 0,
+                    "deleted_at": datetime.datetime.now(),
+                    "is_deleted": True
+                },
+                "$push": {
+                    "history": history_entry  # Add the current state to the history
+                }
+            }
+        )
+        logger.info(f"Thread {thread_number} on /{board}/ has been marked as deleted in MongoDB and historical data has been recorded.")
+    else:
+        logger.info(f"No existing data found for thread {thread_number} on /{board}/ to mark as deleted.")
+
+
 def crawl_thread(board, thread_number):
     chan_client = ChanClient()
     logger.info(f"Fetching thread {board}/{thread_number}...")  # Log initial fetch attempt
@@ -79,22 +141,8 @@ def crawl_thread(board, thread_number):
         existing_thread = threads_collection.find_one({"board": board, "thread_number": thread_number})
         
         if existing_thread:
-            threads_collection.update_one(
-                {"board": board, "thread_number": thread_number},
-                {
-                    "$set": {
-                        "original_post.com": "[deleted]",
-                        "replies": [{**reply, "com": "[deleted]"} for reply in existing_thread.get("replies", [])],
-                        "number_of_replies": 0,
-                        "deleted_at": datetime.datetime.now(),
-                        "previous_title": existing_thread.get("original_post", {}).get("com", "N/A"),
-                        "previous_replies": existing_thread.get("replies", []),
-                        "is_deleted": True
-                    }
-                },
-                upsert=True
-            )
-            logger.info(f"Thread {thread_number} on /{board}/ has been marked as deleted in MongoDB.")
+            # Update existing thread to mark it as deleted
+            mark_thread_as_deleted(board, thread_number)
         else:
             logger.info(f"No existing data found for thread {thread_number} on /{board}/ to mark as deleted.")
 
@@ -182,12 +230,24 @@ def crawl_board(board):
         logger.error(f"Failed to retrieve catalog for board /{board}/")
         return
 
-    thread_numbers = thread_numbers_from_catalog(catalog)
-    total_original_posts = len(thread_numbers)
+    # Fetch thread numbers from the catalog
+    current_thread_numbers = thread_numbers_from_catalog(catalog)
+    total_original_posts = len(current_thread_numbers)
 
+    # Fetch existing thread numbers from the database
+    previous_thread_numbers = get_existing_thread_ids_from_db(board)
+
+    # Find deleted threads
+    deleted_threads = find_deleted_threads(previous_thread_numbers, current_thread_numbers)
+    if deleted_threads:
+        logger.info(f"Found {len(deleted_threads)} deleted threads on /{board}/: {deleted_threads}")
+        for thread_number in deleted_threads:
+            mark_thread_as_deleted(board, thread_number)
+
+    # Queue crawl jobs for existing threads
     with Client(faktory_url=FAKTORY_SERVER_URL, role="producer") as client:
         producer = Producer(client=client)
-        for thread_number in thread_numbers:
+        for thread_number in current_thread_numbers:
             job = Job(jobtype="crawl-thread", args=(board, thread_number), queue="crawl-thread")
             producer.push(job)
 
@@ -220,7 +280,7 @@ if __name__ == "__main__":
     worker_process = multiprocessing.Process(target=start_worker)
     worker_process.start()
 
-    schedule_crawl_jobs_continuously(interval_minutes=1)
+    schedule_crawl_jobs_continuously(interval_minutes=2)
 
     try:
         worker_process.join()
