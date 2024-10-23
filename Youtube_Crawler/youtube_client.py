@@ -27,15 +27,11 @@ class YouTubeClient:
             return None
         
         data = response.json()
-        if 'items' in data and data['items']:
-            return data['items'][0]
-        else:
-            logger.warning(f"No channel details found for channel ID: {channel_id}")
-            return None
+        return data['items'][0]
 
-    def get_channel_videos(self, channel_id, max_results=50):
+    def get_channel_videos(self, channel_id, limit=50):
         logger.info(f"Fetching videos for channel ID: {channel_id}")
-        url = f"{self.base_url}/search?part=snippet&channelId={channel_id}&maxResults={max_results}&order=viewCount&type=video&key={self.api_key}"
+        url = f"{self.base_url}/search?part=snippet&channelId={channel_id}&maxResults={limit}&order=viewCount&type=video&key={self.api_key}"
         response = requests.get(url)
         
         if response.status_code != 200:
@@ -55,15 +51,11 @@ class YouTubeClient:
             return None
         
         data = response.json()
-        if 'items' in data and data['items']:
-            return data['items'][0]
-        else:
-            logger.warning(f"No video details found for video ID: {video_id}")
-            return None
+        return data['items'][0]
 
-    def get_video_comments(self, video_id, max_results=100):
+    def get_video_comments(self, video_id, limit=100):
         logger.info(f"Fetching comments for video ID: {video_id}")
-        url = f"{self.base_url}/commentThreads?part=snippet,replies&videoId={video_id}&maxResults={max_results}&key={self.api_key}"
+        url = f"{self.base_url}/commentThreads?part=snippet,replies&videoId={video_id}&maxResults={limit}&key={self.api_key}"
         response = requests.get(url)
         
         if response.status_code != 200:

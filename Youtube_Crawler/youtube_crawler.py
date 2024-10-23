@@ -64,61 +64,6 @@ def retry_on_network_and_http_errors(func, *args):
     logger.error(f"Max retries reached. Failed to execute {func.__name__} after {MAX_RETRIES} attempts.")
     return None
 
-def crawl_video(channel_id, video_id):
-
-    youtube_client = YouTubeClient()
-    video_data = retry_on_network_and_http_errors(youtube_client.get_video_details, video_id)
-
-    print(f"video_data{video_data}")
-
-    if video_data is None:
-        logger.warning(f"Video {video_id} might be deleted or unavailable.")
-        try:
-            result = videos_collection.update_one(
-                {"video_id": video_id},
-                {"$set": {"isDeleted": True, "crawled_at": datetime.now()}},  
-                upsert=True  
-            )
-            if result.matched_count:
-                logger.info(f"Updated video {video_id} as deleted in MongoDB.")
-            else:
-                logger.info(f"Inserted deleted video {video_id} into MongoDB.")
-        except Exception as e:
-            logger.error(f"Error updating video {video_id} as deleted in MongoDB: {e}")
-        return
-
-    comments_data = retry_on_network_and_http_errors(youtube_client.get_video_comments, video_id)
-    comment_count = len(comments_data) if comments_data else 0
-
-    video_info = {
-        "channel_id": channel_id,
-        "video_id": video_id,
-        "title": video_data['snippet'].get('title', '[Deleted Title]'),
-        "description": video_data['snippet'].get('description', '[Deleted Description]'),
-        "view_count": video_data['statistics'].get('viewCount', 0),
-        "like_count": video_data['statistics'].get('likeCount', 0),
-        #"comment_count": video_data['statistics'].get('commentCount', 0),
-        "comment_count": comment_count, 
-        "comments": comments_data, 
-        "published_at": video_data['snippet'].get('publishedAt', '[Unknown Date]'),
-        "crawled_at": datetime.now(),
-        "isDeleted": False  
-    }
-
-    try:
-        result = videos_collection.update_one(
-            {"video_id": video_id},
-            {"$set": video_info},
-            upsert=True  
-        )
-        if result.matched_count:
-            logger.info(f"Updated video {video_id} in MongoDB.")
-        else:
-            logger.info(f"Inserted video {video_id} into MongoDB.")
-    except Exception as e:
-        logger.error(f"Error inserting or updating video {video_id} into MongoDB: {e}")
-
-
 def crawl_channel(channel_id):
     youtube_client = YouTubeClient()
     channel_data = retry_on_network_and_http_errors(youtube_client.get_channel_details, channel_id)
@@ -140,18 +85,18 @@ def crawl_channel(channel_id):
         result = channels_collection.update_one(
             {"channel_id": channel_id},
             {"$set": channel_info},
-            upsert=True  # This will update if it exists, otherwise insert a new document
+            upsert=True  
         )
         if result.matched_count:
-            logger.info(f"Updated channel {channel_id} in MongoDB.")
+            logger.info(f"Updated channel {channel_id} in database.")
         else:
-            logger.info(f"Inserted channel {channel_id} into MongoDB.")
+            logger.info(f"Inserted channel {channel_id} into database.")
     except Exception as e:
-        logger.error(f"Error inserting or updating channel {channel_id} into MongoDB: {e}")
+        logger.error(f"Error inserting or updating channel {channel_id}: {e}")
     
     videos = retry_on_network_and_http_errors(youtube_client.get_channel_videos, channel_id)
     if videos is None:
-        logger.error(f"Failed to retrieve videos for channel {channel_id}")
+        logger.error(f"Failed to fetch videos for channel {channel_id}")
         return
 
     with Client() as client:
@@ -159,6 +104,44 @@ def crawl_channel(channel_id):
             video_id = video['id']['videoId']
             client.queue('crawl_video', args=(channel_id, video_id), queue='crawl_video')
             logger.info(f"Queued job to crawl video {video_id} from channel {channel_id}")
+
+
+def crawl_video(channel_id, video_id):
+    youtube_client = YouTubeClient()
+    video_data = retry_on_network_and_http_errors(youtube_client.get_video_details, video_id)
+
+    if not video_data:
+        logger.warning(f"Video {video_id} might be deleted or unavailable.")
+        videos_collection.update_one(
+            {"video_id": video_id},
+            {"$set": {"isDeleted": True, "crawled_at": datetime.now()}},
+            upsert=True
+        )
+        return
+
+    comments_data = retry_on_network_and_http_errors(youtube_client.get_video_comments, video_id)
+    #comment_count = len(comments_data) if comments_data else 0
+
+    video_info = {
+        "channel_id": channel_id,
+        "video_id": video_id,
+        "title": video_data['snippet'].get('title', '[Deleted Title]'),
+        "description": video_data['snippet'].get('description', '[Deleted Description]'),
+        "view_count": video_data['statistics'].get('viewCount', 0),
+        "like_count": video_data['statistics'].get('likeCount', 0),
+        "comment_count": len(comments_data),
+        "comments": comments_data,
+        "published_at": video_data['snippet'].get('publishedAt', '[Unknown Date]'),
+        "crawled_at": datetime.now(),
+        "isDeleted": False
+    }
+
+    videos_collection.update_one(
+        {"video_id": video_id},
+        {"$set": video_info},
+        upsert=True
+    )
+
 
 def start_worker():
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
@@ -168,7 +151,7 @@ def start_worker():
     logger.info("Worker started. Listening for jobs...")
     worker.run()
 
-def schedule_crawl_jobs(interval = 40):
+def schedule_crawl_jobs(interval = 180):
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
     channel_ids = os.getenv("YOUTUBE_CHANNELS").split(',')
     while True:
@@ -189,7 +172,7 @@ def monitor_queue():
             total_enqueued = sum(q['size'] for q in info['queues'])
             total_in_progress = info['tasks']['active']
             logger.info(f"Jobs in queue: {total_enqueued}, Jobs in progress: {total_in_progress}")
-        time.sleep(40)
+        time.sleep(180)
 
 if __name__ == "__main__":
     os.environ['FAKTORY_URL'] = FAKTORY_SERVER_URL
@@ -200,10 +183,8 @@ if __name__ == "__main__":
     monitor_process = multiprocessing.Process(target=monitor_queue)
     monitor_process.start()
 
-    
-
     try:
-        schedule_crawl_jobs(interval = 40)
+        schedule_crawl_jobs(interval = 180)
     except KeyboardInterrupt:
         logger.info("Stopping processes...")
         worker_process.terminate()
