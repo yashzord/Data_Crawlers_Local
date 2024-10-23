@@ -3,7 +3,7 @@ import requests
 import time
 from requests.exceptions import HTTPError, RequestException
 
-# Configure logging to help with debugging and information output to the console.
+# Logging to help with debugging
 logger = logging.getLogger("4chan client")
 logger.propagate = False
 logger.setLevel(logging.INFO)
@@ -12,21 +12,26 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 sh.setFormatter(formatter)
 logger.addHandler(sh)
 
+# Constants used when retrying incase of http errors
 MAX_RETRIES = 5
 RETRY_DELAY = 5
 
 class ChanClient:
+    # Base Url
     API_BASE = "http://a.4cdn.org"
 
     def __init__(self):
+        # Caches the last modified time for each API call
         self.last_modified_times = {}
 
-    def execute_request(self, api_call, headers={}, retries=MAX_RETRIES, backoff_factor=RETRY_DELAY):
+    def execute_request(self, api_call, headers={}, retries=MAX_RETRIES, retrying_wait_time=RETRY_DELAY):
         """
-        Execute an HTTP GET request with retries and error handling for various HTTP status codes.
+        Executes the Http Get request to crawl from 4chan API Endpoints
+        Also, implemented Error Handling and retrying incase of Http Errors
         """
         for attempt in range(retries):
             try:
+                # Actual Get Request part
                 response = requests.get(api_call, headers=headers)
                 if response.status_code == 304:
                     logger.info("No new data since last modified.")
@@ -34,35 +39,40 @@ class ChanClient:
                 
                 response.raise_for_status()
 
-                # Save the last modified time if present to use in subsequent requests.
+                # If available. we save the last modified time to use in subsequent requests.
                 if 'Last-Modified' in response.headers:
                     self.last_modified_times[api_call] = response.headers['Last-Modified']
 
                 return response.json()
+            
             except HTTPError as http_err:
                 status_code = response.status_code
+                # Case when thread maybe deleted or fell into archive board or resource not found in general
                 if status_code == 404:
                     logger.warning(f"Resource not found (404): {api_call}")
-                    # Return None to signify that the resource is not found or deleted.
                     return None
+                # Case when Client Side Error
                 elif 400 <= status_code < 500:
-                    logger.error(f"Client error occurred: {status_code} on {api_call}. Retrying in {backoff_factor} seconds...")
-                    time.sleep(backoff_factor)
+                    logger.error(f"Client Side error occurred: {status_code} on {api_call}. Retrying in {retrying_wait_time} seconds...")
+                    time.sleep(retrying_wait_time)
+                # Case when Server Side Error
                 elif 500 <= status_code < 600:
-                    logger.error(f"Server error occurred: {status_code} on {api_call}. Retrying in {backoff_factor} seconds...")
-                    time.sleep(backoff_factor)
-                    backoff_factor *= 2
+                    logger.error(f"Server Side error occurred: {status_code} on {api_call}. Retrying in {retrying_wait_time} seconds...")
+                    time.sleep(retrying_wait_time)
+                    retrying_wait_time *= 2
                 else:
                     logger.error(f"Unexpected HTTP error: {http_err}")
                     return None
+                
             except RequestException as req_err:
-                logger.error(f"Network error: {req_err}. Retrying in {backoff_factor} seconds...")
-                time.sleep(backoff_factor)
-                backoff_factor *= 2
+                logger.error(f"Network error: {req_err}. Retrying in {retrying_wait_time} seconds...")
+                time.sleep(retrying_wait_time)
+                retrying_wait_time *= 2
 
         logger.error(f"Max retries reached. Failed to execute request after {retries} attempts: {api_call}")
         return None
 
+    # Connects to API endpoint which fetches all the threads in a specific board.
     def get_threads(self, board):
         api_call = f"{self.API_BASE}/{board}/threads.json"
         headers = {}
@@ -71,6 +81,7 @@ class ChanClient:
 
         return self.execute_request(api_call, headers)
 
+    # Connects to API endpoint which fetches all the attributes of a specific thread on a specific board.
     def get_thread(self, board, thread_number):
         api_call = f"{self.API_BASE}/{board}/thread/{thread_number}.json"
         headers = {}
@@ -79,6 +90,7 @@ class ChanClient:
 
         return self.execute_request(api_call, headers)
 
+    # Connects to API endpoint which fetches the catalog (list of live threads) of a specific board.
     def get_catalog(self, board):
         api_call = f"{self.API_BASE}/{board}/catalog.json"
         headers = {}
