@@ -3,3 +3,5 @@ pymongo
 # faktory
 pyfaktory
 python-dotenv
+matplotlib
+pandas
