@@ -303,7 +303,7 @@ if __name__ == "__main__":
     worker_process = multiprocessing.Process(target=start_worker)
     worker_process.start()
 
-    schedule_crawl_jobs_continuously(interval_minutes=2)
+    schedule_crawl_jobs_continuously(interval_minutes=5)
 
     try:
         worker_process.join()
