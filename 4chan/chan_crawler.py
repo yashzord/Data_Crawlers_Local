@@ -267,7 +267,7 @@ def crawl_board(board):
     logger.info(f"Queued crawl jobs for all threads on /{board}/")
     logger.info(f"Total original posts crawled from /{board}/: {total_original_posts}")
 
-# Schedules the Crawl after every specific interval. In our case it should be 6 hours.
+# Schedules the Crawl after every specific interval. In our case it should be 6 hours or TBD.
 def schedule_crawl_jobs_continuously(interval_minutes=360):
     # Keeps track of which crawl we are currently performing.
     crawl_count = 0
@@ -302,8 +302,8 @@ def start_worker():
 if __name__ == "__main__":
     worker_process = multiprocessing.Process(target=start_worker)
     worker_process.start()
-
-    schedule_crawl_jobs_continuously(interval_minutes=5)
+    # As of now crawling every 30 minutes, but might change it.
+    schedule_crawl_jobs_continuously(interval_minutes=30)
 
     try:
         worker_process.join()
