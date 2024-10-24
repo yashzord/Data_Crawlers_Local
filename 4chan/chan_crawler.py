@@ -98,13 +98,14 @@ def mark_thread_as_deleted(board, thread_number):
     existing_thread = threads_collection.find_one({"board": board, "thread_number": thread_number})
 
     if existing_thread:
-        # Collecting history of a thread for further context after deleting.
-        history_entry = {
-            "timestamp": datetime.datetime.now(),
-            "original_post": existing_thread.get("original_post", {}),
-            "replies": existing_thread.get("replies", []),
-            "number_of_replies": existing_thread.get("number_of_replies", 0)
-        }
+        if not existing_thread.get("is_deleted", False):  # Check if the thread is already deleted
+            # Collecting the current state before marking the thread as deleted
+            history_entry = {
+                "timestamp": datetime.datetime.now(),
+                "original_post": existing_thread.get("original_post", {}),
+                "replies": existing_thread.get("replies", []),
+                "number_of_replies": existing_thread.get("number_of_replies", 0)
+            }
 
         # We actually mark the thread as deleted / updates the Database.
         # We also add History - previous context to modify json structure after Deletion.
@@ -145,7 +146,8 @@ def crawl_thread(board, thread_number):
         
         if existing_thread:
             # Updating existing thread to mark it as deleted
-            mark_thread_as_deleted(board, thread_number)
+            if not existing_thread.get("is_deleted", False):  # Only mark as deleted if it's not already deleted
+                mark_thread_as_deleted(board, thread_number)
         else:
             logger.info(f"No existing data found for thread {thread_number} on /{board}/ to mark as deleted.")
 
@@ -153,13 +155,34 @@ def crawl_thread(board, thread_number):
     else:
         logger.info(f"Successfully fetched thread {board}/{thread_number}.")
 
+    # Prepare current data for storing in history
+    original_post = thread_data['posts'][0]
+    replies = thread_data['posts'][1:]
+    number_of_replies = len(replies)
+    crawled_at = datetime.datetime.now()
+
     # Checking if the thread is already in the database
     existing_thread = threads_collection.find_one({"board": board, "thread_number": thread_number})
+
+    # Prepare history entry
+    history_entry = {
+        "crawled_at": crawled_at,
+        "original_post": original_post,
+        "replies": replies,
+        "number_of_replies": number_of_replies
+    }
+
     # if original post and replies string content changed.
     op_content_changed = False
     replies_content_changed = False
 
     if existing_thread:
+        # Add history entry before making any changes to the thread
+        threads_collection.update_one(
+            {"board": board, "thread_number": thread_number},
+            {"$push": {"history": history_entry}}  # Add to the history array
+        )
+
         # Checking if the original post has changed compared to the database.
         if existing_thread['original_post'] != thread_data['posts'][0]:
             op_content_changed = True
@@ -226,7 +249,8 @@ def crawl_thread(board, thread_number):
             "replies": thread_data["posts"][1:],
             "number_of_replies": len(thread_data["posts"]) - 1,
             "crawled_at": datetime.datetime.now(),
-            "is_deleted": False
+            "is_deleted": False,
+            "history": [history_entry]  # Add history entry at creation
         }
         result = threads_collection.insert_one(thread_info)
         logger.info(f"Inserted thread {thread_number} from /{board}/ into MongoDB with ID: {result.inserted_id}")
